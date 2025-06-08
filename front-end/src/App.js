@@ -55,16 +55,17 @@ const CollectionStep = ({ currentUser, onComplete }) => {
     const [typingInput, setTypingInput] = useState('');
     const [keystrokeData, setKeystrokeData] = useState([]);
     const [keyPressTimes, setKeyPressTimes] = useState({});
+    const [lastEvent, setLastEvent] = useState(null); // NEW: To track the previous key event
     const [statusMessage, setStatusMessage] = useState('');
 
     const displayNextPrompt = useCallback(() => {
         if (currentPromptIndex >= PROMPTS.length - 1) {
-             // Pass the collected data for the final prompt as well
              onComplete(keystrokeData);
         } else {
             setCurrentPromptIndex(prevIndex => prevIndex + 1);
             setTypingInput('');
             setStatusMessage('');
+            setLastEvent(null); // NEW: Reset for the new prompt
         }
     }, [currentPromptIndex, onComplete, keystrokeData]);
     
@@ -93,12 +94,17 @@ const CollectionStep = ({ currentUser, onComplete }) => {
         if (!pressTime) return;
 
         const releaseTime = performance.now();
-        const dwellTime = releaseTime - pressTime;
+        
+        // --- NEW: Calculate all timing metrics ---
+        const dwell_time = releaseTime - pressTime;
+        let p2p_time = 0;
+        let r2p_time = 0;
+        let r2r_time = 0;
 
-        let flightTime = 0;
-        if (keystrokeData.length > 0) {
-            const lastEvent = keystrokeData[keystrokeData.length - 1];
-            flightTime = releaseTime - lastEvent.release_time;
+        if (lastEvent) {
+            p2p_time = pressTime - lastEvent.press_time;
+            r2p_time = pressTime - lastEvent.release_time;
+            r2r_time = releaseTime - lastEvent.release_time;
         }
 
         const newEvent = {
@@ -107,11 +113,14 @@ const CollectionStep = ({ currentUser, onComplete }) => {
             key: key,
             press_time: pressTime,
             release_time: releaseTime,
-            dwell_time: dwellTime,
-            flight_time: flightTime
+            dwell_time: dwell_time,
+            p2p_time: p2p_time,
+            r2p_time: r2p_time,
+            r2r_time: r2r_time,
         };
 
         setKeystrokeData(prevData => [...prevData, newEvent]);
+        setLastEvent(newEvent); // NEW: Update the last event
         
         // Clean up the press time map
         setKeyPressTimes(prev => {
@@ -120,7 +129,7 @@ const CollectionStep = ({ currentUser, onComplete }) => {
             return newTimes;
         });
 
-    }, [typingInput, keyPressTimes, keystrokeData, currentUser, currentPromptIndex, displayNextPrompt]);
+    }, [typingInput, keyPressTimes, lastEvent, currentUser, currentPromptIndex, displayNextPrompt]);
 
     const progress = ((currentPromptIndex + 1) / PROMPTS.length) * 100;
 
@@ -163,10 +172,9 @@ const CompleteStep = ({ dataSent }) => (
     </div>
 );
 
-
 // --- Main App Component ---
 export default function App() {
-    const [step, setStep] = useState('userId'); // 'userId', 'collection', 'complete'
+    const [step, setStep] = useState('userId');
     const [currentUser, setCurrentUser] = useState('');
     const [dataSent, setDataSent] = useState(false);
 
@@ -177,43 +185,34 @@ export default function App() {
 
     const handleSessionComplete = async (finalData) => {
         setStep('pending');
-        console.log("Preparing to send data for user:", currentUser);
         
         if (finalData.length === 0) {
-            console.warn("No keystroke data was collected. Nothing to send.");
             setStep('complete');
             return;
         }
 
-        // --- NEW: Convert data to CSV format ---
-        const headers = ['user', 'prompt', 'key', 'press_time', 'release_time', 'dwell_time', 'flight_time'];
+        // --- NEW: Updated headers for the CSV file ---
+        const headers = ['user', 'prompt', 'key', 'press_time', 'release_time', 'dwell_time', 'p2p_time', 'r2p_time', 'r2r_time'];
         const csvRows = finalData.map(row => {
             const sanitizedPrompt = `"${row.prompt.replace(/"/g, '""')}"`;
-            const key = row.key === ',' ? '","' : row.key; // Handle commas in key data
-            return [row.user, sanitizedPrompt, key, row.press_time, row.release_time, row.dwell_time, row.flight_time].join(',');
+            const key = row.key === ',' ? '","' : row.key;
+            return [row.user, sanitizedPrompt, key, row.press_time, row.release_time, row.dwell_time, row.p2p_time, row.r2p_time, row.r2r_time].join(',');
         });
         const csvContent = [headers.join(','), ...csvRows].join('\n');
         
-        // --- NEW: Create a Blob and FormData ---
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const formData = new FormData();
         formData.append('file', blob, `${currentUser}_keystrokes.csv`);
 
         try {
-            // --- NEW: Send FormData instead of JSON ---
             const response = await fetch('http://127.0.0.1:5000/api/save_data', {
                 method: 'POST',
-                body: formData, // The browser will set the 'Content-Type' to 'multipart/form-data' automatically
+                body: formData,
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
-            const result = await response.json();
-            console.log("Backend response:", result);
             setDataSent(true);
-
         } catch (error) {
             console.error("Failed to send data to backend:", error);
             setDataSent(false);
@@ -240,7 +239,7 @@ export default function App() {
     return (
         <div className="bg-gray-100 flex items-center justify-center min-h-screen p-4 font-sans">
             <div className="w-full max-w-2xl mx-auto">
-                <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 transition-all duration-300 ease-in-out">
+                <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8">
                     <header className="text-center mb-6">
                         <h1 className="text-2xl md:text-3xl font-bold text-gray-800">Keystroke Dynamics Collector</h1>
                         <p className="text-gray-500 mt-1">Help us understand typing patterns.</p>
