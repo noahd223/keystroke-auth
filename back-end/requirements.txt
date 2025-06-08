@@ -1,3 +1,7 @@
-pynput
 flask
 flask_cors
+pandas
+numpy
+torch
+scikit-learn
+joblib
