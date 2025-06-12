@@ -1,123 +1,144 @@
 import pandas as pd
 import numpy as np
-import torch
-from sklearn.preprocessing import MinMaxScaler
-import joblib  # For saving the scaler
-import os      # To handle file paths
-import glob    # To find all files matching a pattern
+import itertools
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
+import os
+import glob
+import random
 
 # --- Configuration ---
-# NEW: Point to the directory containing all user CSV files.
-# IMPORTANT: Make sure your original 'noah_keystroke_data.csv' is also in this directory!
-RAW_DATA_DIR = 'keystroke_data'  
-PROCESSED_DATA_FILE = './processed_data/processed_data.pt' # Output file for PyTorch
-SCALER_FILE = './processed_data/scaler.gz' # File to save the feature scaler
-SEQUENCE_LENGTH = 40  # How many consecutive keystrokes to use for one training sample
+INPUT_DIR = 'keystroke_data/'
+PROCESSED_DIR = 'processed_data/'
+SEQUENCE_LENGTH = 100 
+FEATURES_TO_USE = ['dwell_time', 'p2p_time', 'r2p_time', 'r2r_time']
 
-# The features we will use to train the model
-FEATURES = ['dwell_time', 'p2p_time', 'r2p_time', 'r2r_time']
-
-def preprocess_data():
+def create_sequences(df):
     """
-    Loads all raw keystroke data from a directory, combines it, cleans it,
-    normalizes it, creates sequences, and saves it for PyTorch model training.
+    Converts the raw dataframe into a dictionary of sequences for each user and prompt.
+    Returns a dict: {user: {prompt: [[feature1, feature2, ...], ...]}}
     """
-    print("Starting data preprocessing...")
+    sequences = {}
+    print(f"Extracting features: {FEATURES_TO_USE}")
+    for (user, prompt), group in df.groupby(['user', 'prompt']):
+        if user not in sequences:
+            sequences[user] = {}
+        features = group[FEATURES_TO_USE].values
+        sequences[user][prompt] = features
+    return sequences
 
-    # 1. Load and combine all raw data files from the directory
-    try:
-        # Create a pattern to find all .csv files in the directory
-        path_pattern = os.path.join(RAW_DATA_DIR, '*.csv')
-        all_csv_files = glob.glob(path_pattern)
+def create_pairs(sequences):
+    """
+    Generates a BALANCED set of positive (same user) and negative (different user) pairs.
+    """
+    positive_pairs = []
+    negative_pairs = []
+    users = list(sequences.keys())
 
-        if not all_csv_files:
-            print(f"Error: No CSV files were found in the directory '{RAW_DATA_DIR}'.")
-            print("Please ensure your data files are in the correct location.")
-            return
+    print("Generating positive pairs...")
+    for user in tqdm(users, desc="Processing users for positive pairs"):
+        user_prompts = list(sequences[user].keys())
+        if len(user_prompts) < 2:
+            continue
+        for prompt1, prompt2 in itertools.combinations(user_prompts, 2):
+            positive_pairs.append([sequences[user][prompt1], sequences[user][prompt2]])
 
-        # Read each CSV file and store its DataFrame in a list
-        list_of_dfs = [pd.read_csv(f) for f in all_csv_files]
+    num_positive_pairs = len(positive_pairs)
+    print(f"Generated {num_positive_pairs} positive pairs.")
+    print("Generating an equal number of negative pairs...")
+    
+    # --- EDITED: Generate an equal number of negative pairs ---
+    while len(negative_pairs) < num_positive_pairs:
+        # Pick two different random users
+        u1, u2 = random.sample(users, 2)
         
-        # Combine all the DataFrames into one large DataFrame
-        df = pd.concat(list_of_dfs, ignore_index=True)
-        print(f"Loaded and combined {len(all_csv_files)} files with a total of {len(df)} keystroke events.")
+        # Pick a random prompt from each of the selected users
+        prompt1 = random.choice(list(sequences[u1].keys()))
+        prompt2 = random.choice(list(sequences[u2].keys()))
+        
+        negative_pairs.append([sequences[u1][prompt1], sequences[u2][prompt2]])
 
-    except Exception as e:
-        print(f"An error occurred during file loading: {e}")
+    return positive_pairs, negative_pairs
+
+
+def normalize_and_pad(pairs, sequence_length):
+    """
+    Normalizes and pads/truncates all sequences in the pairs to a fixed length.
+    """
+    processed_pairs = []
+    scaler = StandardScaler()
+
+    all_sequences = [seq for pair in pairs for seq in pair]
+    if not all_sequences: return np.array([])
+    
+    flat_list = [item for sublist in all_sequences for item in sublist]
+    if not flat_list: return np.array([])
+
+    scaler.fit(np.array(flat_list))
+    
+    print("Normalizing and padding sequences...")
+    for pair in tqdm(pairs, desc="Processing pairs"):
+        padded_pair = []
+        for seq in pair:
+            normalized_seq = scaler.transform(seq)
+            if len(normalized_seq) < sequence_length:
+                pad_width = sequence_length - len(normalized_seq)
+                padded_seq = np.pad(normalized_seq, ((0, pad_width), (0, 0)), 'constant', constant_values=0)
+            else:
+                padded_seq = normalized_seq[:sequence_length]
+            padded_pair.append(padded_seq)
+        processed_pairs.append(padded_pair)
+        
+    return np.array(processed_pairs)
+
+
+def main():
+    """
+    Main function to run the preprocessing pipeline.
+    """
+    csv_files = glob.glob(os.path.join(INPUT_DIR, '*.csv'))
+    if not csv_files:
+        print(f"Error: No .csv files found in the directory '{INPUT_DIR}'.")
         return
 
-    # 2. Data Cleaning
-    # The first keystroke in any given prompt has flight times of 0, which isn't
-    # meaningful data. We'll remove these rows.
-    initial_rows = len(df)
-    df = df[df['p2p_time'] > 0]
-    # Also drop rows with extreme outliers, which can happen with long pauses.
-    # We'll cap flight times at 3 seconds (3000 ms).
-    df = df[df['r2p_time'] < 3000]
-    print(f"Removed {initial_rows - len(df)} initial keystrokes and outliers.")
-    
-    if df.empty:
-        print("No data left after cleaning. Exiting.")
+    print(f"Found {len(csv_files)} CSV files to process in '{INPUT_DIR}'.")
+    df = pd.concat((pd.read_csv(f) for f in csv_files), ignore_index=True)
+    print(f"Total rows loaded: {len(df)}")
+
+    if df['user'].nunique() < 2:
+        print("Error: Need data from at least two different users to create negative pairs.")
         return
 
-    # 3. Feature Scaling (Normalization)
-    # We scale the features to be between 0 and 1. This helps the neural network
-    # train more effectively.
-    scaler = MinMaxScaler()
-    df[FEATURES] = scaler.fit_transform(df[FEATURES])
-    joblib.dump(scaler, SCALER_FILE)
-    print(f"Features normalized and scaler saved to '{SCALER_FILE}'.")
-
-    # 4. Create Sequences
-    # We'll group the data by user and the prompt they typed, then create
-    # overlapping sequences of keystrokes.
-    sequences = []
-    labels = []
+    sequences = create_sequences(df)
+    positive_pairs, negative_pairs = create_pairs(sequences)
     
-    # Create a mapping from user ID (string) to a unique integer
-    user_ids = df['user'].unique()
-    user_to_id = {name: i for i, name in enumerate(user_ids)}
-    print(f"Found {len(user_ids)} unique users. Mapping: {user_to_id}")
+    print(f"\nGenerated {len(positive_pairs)} positive pairs.")
+    print(f"Generated {len(negative_pairs)} negative pairs. (Balanced)")
 
-    # Group by user and prompt to create sequences from each typing session
-    grouped = df.groupby(['user', 'prompt'])
-
-    for _, group in grouped:
-        feature_data = group[FEATURES].values
-        user_name = group['user'].iloc[0]
-        label = user_to_id[user_name]
-
-        # Slide a window over the keystroke events to create sequences
-        for i in range(len(feature_data) - SEQUENCE_LENGTH + 1):
-            seq = feature_data[i : i + SEQUENCE_LENGTH]
-            sequences.append(seq)
-            labels.append(label)
-
-    if not sequences:
-        print("Could not create any sequences. Check if there's enough data for the given SEQUENCE_LENGTH.")
-        return
-
-    # 5. Convert to PyTorch Tensors
-    X = torch.tensor(np.array(sequences), dtype=torch.float32)
-    y = torch.tensor(np.array(labels), dtype=torch.long)
+    X_pos = normalize_and_pad(positive_pairs, SEQUENCE_LENGTH)
+    X_neg = normalize_and_pad(negative_pairs, SEQUENCE_LENGTH)
     
-    print(f"Created {len(X)} sequences of length {SEQUENCE_LENGTH}.")
-    print(f"Shape of feature tensor (X): {X.shape}")
-    print(f"Shape of label tensor (y): {y.shape}")
-
-    # 6. Save Processed Data
-    data_to_save = {
-        'sequences': X,
-        'labels': y,
-        'user_to_id': user_to_id,
-        'features': FEATURES
-    }
-    torch.save(data_to_save, PROCESSED_DATA_FILE)
-    print(f"Processed data saved to '{PROCESSED_DATA_FILE}'.")
+    y_pos = np.ones(len(X_pos))
+    y_neg = np.zeros(len(X_neg))
+    
+    X = np.concatenate([X_pos, X_neg], axis=0)
+    y = np.concatenate([y_pos, y_neg], axis=0)
+    
+    indices = np.arange(len(X))
+    np.random.shuffle(indices)
+    X = X[indices]
+    y = y[indices]
+    
+    print(f"\nSaving processed data to '{PROCESSED_DIR}'...")
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    
+    np.save(os.path.join(PROCESSED_DIR, 'X_processed.npy'), X)
+    np.save(os.path.join(PROCESSED_DIR, 'y_processed.npy'), y)
+    
     print("\nPreprocessing complete!")
+    print(f"X shape: {X.shape}")
+    print(f"y shape: {y.shape}")
 
 
 if __name__ == '__main__':
-    # Before running, ensure the 'synthetic_data' directory exists and
-    # contains all the CSV files you want to process (including your own).
-    preprocess_data()
+    main()

@@ -1,150 +1,193 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
+from sklearn.model_selection import train_test_split
+import os
 
-# --- Configuration ---
-PROCESSED_DATA_FILE = 'processed_data.pt'
-TRAINED_MODEL_FILE = 'keystroke_model.pth'
+class SiameseNetwork(nn.Module):
+    """
+    A Siamese network with an LSTM base network for keystroke biometric authentication.
+    --- MODIFIED ARCHITECTURE ---
+    This version uses a more powerful classifier head that combines the embeddings
+    instead of relying solely on Euclidean distance.
+    """
+    def __init__(self, input_dim, hidden_dim, embedding_dim, dropout_rate=0.4):
+        super(SiameseNetwork, self).__init__()
+        # Base network to produce embeddings
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, embedding_dim)
+        )
 
-# --- Model Hyperparameters ---
-# These are the settings for our neural network. You can tune them later.
-INPUT_SIZE = 4      # Number of features per keystroke (dwell, p2p, r2p, r2r)
-HIDDEN_SIZE = 64    # Size of the LSTM's memory
-NUM_LAYERS = 2      # Number of LSTM layers stacked on top of each other
-# NUM_CLASSES will be determined from the data
-DROPOUT_RATE = 0.5  # Helps prevent the model from just memorizing the data
+        # --- NEW: A more powerful classifier head ---
+        # It takes the concatenated embeddings and their difference as input.
+        # Input size will be 2 * embedding_dim (for e1 and e2)
+        self.classifier = nn.Sequential(
+            nn.Linear(2 * embedding_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(p=0.4),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(p=0.4),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
 
-# --- Training Hyperparameters ---
-LEARNING_RATE = 0.001
-BATCH_SIZE = 32
-NUM_EPOCHS = 25     # How many times to show the entire dataset to the model
-
-# --- 1. Model Definition ---
-# Here we define the architecture of our neural network.
-class KeystrokeAuthenticator(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, num_classes, dropout_rate):
-        super(KeystrokeAuthenticator, self).__init__()
-        # The LSTM layer processes the sequence of keystroke timings.
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
-                              batch_first=True, dropout=dropout_rate)
-        # The fully connected layer takes the LSTM's output and makes the final prediction.
-        self.fc = nn.Linear(hidden_size, num_classes)
-
-    def forward(self, x):
-        # We only care about the final output of the LSTM from the last keystroke.
-        # h_n contains the hidden state of the last time step.
+    def forward_once(self, x):
+        """
+        Forward pass for one branch of the Siamese network to get the embedding.
+        """
         _, (h_n, _) = self.lstm(x)
-        # We take the output from the last layer's hidden state and pass it to our final layer.
-        out = self.fc(h_n[-1, :, :])
-        return out
+        embedding = self.fc(h_n.squeeze(0))
+        return embedding
 
-# --- 2. Data Loading and Preparation ---
-def load_and_prepare_data():
-    """Loads the preprocessed data and splits it into training and validation sets."""
-    print("Loading preprocessed data...")
+    def forward(self, input1, input2):
+        """
+        Forward pass for the entire network.
+        """
+        # Get the embeddings for each input
+        embedding1 = self.forward_once(input1)
+        embedding2 = self.forward_once(input2)
+
+        # --- MODIFIED: Combine embeddings for the classifier ---
+        # Instead of distance, we concatenate the embeddings to give the
+        # classifier more information.
+        combined_embeddings = torch.cat((embedding1, embedding2), dim=1)
+        
+        output = self.classifier(combined_embeddings)
+        return output
+
+# (The EarlyStopping class remains the same as before)
+class EarlyStopping:
+    def __init__(self, patience=5, verbose=False, delta=0, path='saved_models/siamese_model.pth'):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.inf
+        self.delta = delta
+        self.path = path
+    def __call__(self, val_loss, model):
+        score = -val_loss
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+        elif score < self.best_score + self.delta:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
+    def save_checkpoint(self, val_loss, model):
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+        if not os.path.exists(os.path.dirname(self.path)):
+            os.makedirs(os.path.dirname(self.path))
+        torch.save(model.state_dict(), self.path)
+        self.val_loss_min = val_loss
+
+def main():
+    """
+    Main function to train the Siamese network.
+    """
+    # --- 1. Load Data ---
+    print("Loading data...")
     try:
-        data = torch.load(PROCESSED_DATA_FILE)
-        X = data['sequences']
-        y = data['labels']
-        user_to_id = data['user_to_id']
-        print(f"Data loaded successfully. Found {len(X)} sequences.")
+        X = np.load('processed_data/X_processed.npy')
+        y = np.load('processed_data/y_processed.npy')
     except FileNotFoundError:
-        print(f"Error: Processed data file '{PROCESSED_DATA_FILE}' not found.")
-        print("Please run the 'preprocess_data.py' script first.")
-        return None, None, None, None
+        print("Error: Make sure 'X_processed.npy' and 'y_processed.npy' are in the 'processed_data' directory.")
+        return
 
-    # Create a TensorDataset, which is a PyTorch-specific way to handle datasets.
-    dataset = TensorDataset(X, y)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Split the data into a training set and a validation set (e.g., 80% train, 20% validation)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    X_train1 = torch.tensor(X_train[:, 0, :, :], dtype=torch.float32)
+    X_train2 = torch.tensor(X_train[:, 1, :, :], dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
 
-    # Create DataLoaders to handle batching and shuffling of the data.
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    X_val1 = torch.tensor(X_val[:, 0, :, :], dtype=torch.float32)
+    X_val2 = torch.tensor(X_val[:, 1, :, :], dtype=torch.float32)
+    y_val_tensor = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+
+    train_dataset = TensorDataset(X_train1, X_train2, y_train_tensor)
+    val_dataset = TensorDataset(X_val1, X_val2, y_val_tensor)
+
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+
+    # --- 2. Initialize Model, Loss, and Optimizer ---
+    print("Initializing model...")
+    input_dim = 4
+    hidden_dim = 128
+    embedding_dim = 64
+    model = SiameseNetwork(input_dim, hidden_dim, embedding_dim)
+
+    criterion = nn.BCELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-5) # Slightly reduced learning rate
+
+    # --- 3. Training Loop ---
+    num_epochs = 50
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     
-    print(f"Data split into {len(train_dataset)} training samples and {len(val_dataset)} validation samples.")
+    early_stopping = EarlyStopping(patience=10, verbose=True, path='saved_models/siamese_model_best.pth') # Increased patience
     
-    num_classes = len(user_to_id)
-    return train_loader, val_loader, num_classes, user_to_id
+    print(f"Training on {device}...")
 
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+        for seq1, seq2, labels in train_loader:
+            seq1, seq2, labels = seq1.to(device), seq2.to(device), labels.to(device)
 
-# --- 3. Training Loop ---
-def train_model():
-    """The main function to orchestrate the model training process."""
-    train_loader, val_loader, num_classes, user_to_id = load_and_prepare_data()
-
-    if train_loader is None:
-        return # Stop if data loading failed
-
-    print(f"\nInitializing model for {num_classes} users...")
-    
-    # Initialize the model, loss function, and optimizer
-    model = KeystrokeAuthenticator(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, num_classes, DROPOUT_RATE)
-    criterion = nn.CrossEntropyLoss() # Good for classification problems
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
-    print("Starting training...")
-    # Loop over the dataset multiple times (epochs)
-    for epoch in range(NUM_EPOCHS):
-        # --- Training Phase ---
-        model.train() # Set the model to training mode
-        total_train_loss = 0
-        for sequences, labels in train_loader:
-            # Forward pass: compute predicted outputs by passing inputs to the model
-            outputs = model(sequences)
+            optimizer.zero_grad()
+            outputs = model(seq1, seq2)
             loss = criterion(outputs, labels)
-            
-            # Backward pass and optimization
-            optimizer.zero_grad() # Clear previous gradients
-            loss.backward()       # Compute gradients
-            optimizer.step()      # Update weights
-            
-            total_train_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
 
-        avg_train_loss = total_train_loss / len(train_loader)
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for seq1_val, seq2_val, labels_val in val_loader:
+                seq1_val, seq2_val, labels_val = seq1_val.to(device), seq2_val.to(device), labels_val.to(device)
+                outputs_val = model(seq1_val, seq2_val)
+                loss = criterion(outputs_val, labels_val)
+                val_loss += loss.item()
+                predicted = (outputs_val > 0.5).float()
+                total += labels_val.size(0)
+                correct += (predicted == labels_val).sum().item()
+        
+        avg_train_loss = running_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
+        val_accuracy = correct / total
 
-        # --- Validation Phase ---
-        model.eval() # Set the model to evaluation mode
-        total_val_loss = 0
-        correct_predictions = 0
-        total_samples = 0
-        with torch.no_grad(): # We don't need to compute gradients during validation
-            for sequences, labels in val_loader:
-                outputs = model(sequences)
-                loss = criterion(outputs, labels)
-                total_val_loss += loss.item()
-                
-                # Calculate accuracy
-                _, predicted = torch.max(outputs.data, 1)
-                total_samples += labels.size(0)
-                correct_predictions += (predicted == labels).sum().item()
+        print(f"Epoch {epoch+1}/{num_epochs} | "
+              f"Train Loss: {avg_train_loss:.4f} | "
+              f"Val Loss: {avg_val_loss:.4f} | "
+              f"Val Acc: {val_accuracy:.4f}")
 
-        avg_val_loss = total_val_loss / len(val_loader)
-        val_accuracy = (correct_predictions / total_samples) * 100
+        early_stopping(avg_val_loss, model)
+        if early_stopping.early_stop:
+            print("Early stopping triggered")
+            break
 
-        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
-
-    # --- 4. Save the Trained Model ---
     print("\nTraining complete.")
-    
-    # We save the model's learned weights, plus other important info
-    model_data = {
-        'model_state_dict': model.state_dict(),
-        'input_size': INPUT_SIZE,
-        'hidden_size': HIDDEN_SIZE,
-        'num_layers': NUM_LAYERS,
-        'num_classes': num_classes,
-        'dropout_rate': DROPOUT_RATE,
-        'user_to_id': user_to_id
-    }
-    torch.save(model_data, TRAINED_MODEL_FILE)
-    print(f"Trained model saved to '{TRAINED_MODEL_FILE}'.")
-
+    print(f"Best model saved to {early_stopping.path}")
 
 if __name__ == '__main__':
-    train_model()
+    main()

@@ -9,12 +9,6 @@ import string
 ORIGINAL_DATA_FILE = './keystroke_data/noah_keystroke_data.csv' 
 # A directory to save the individual user CSV files.
 OUTPUT_DIR = 'keystroke_data'
-# A list of unique names for our new synthetic users.
-SYNTHETIC_USER_NAMES = [
-    "Olivia_Chen", "Benjamin_Carter", "Sophia_Rodriguez", "Liam_Goldstein", 
-    "Ava_Nguyen", "Noah_Patel", "Isabella_Khan", "Lucas_Martinez", 
-    "Mia_Sullivan", "Jackson_Kim"
-]
 # --- Personality Configuration ---
 # How much variation can each bot have from the original user?
 VARIATION_INTENSITY = 0.15 
@@ -30,7 +24,7 @@ RECOGNITION_PAUSE = 100
 # The features we will modify for the synthetic users.
 TIMING_FEATURES = ['dwell_time', 'p2p_time', 'r2p_time', 'r2r_time']
 
-def generate_augmented_data_separated():
+def generate_augmented_data_separated(num_users=50):
     """
     Loads a single user's keystroke data, generates multiple synthetic users
     by applying variations and simulating errors, and saves each as a separate CSV file.
@@ -55,7 +49,8 @@ def generate_augmented_data_separated():
         print(f"Created directory: '{OUTPUT_DIR}'")
 
     # 3. Loop through each new user name to create a separate file
-    for bot_name in SYNTHETIC_USER_NAMES:
+    for i in range(num_users):
+        bot_name = f"user_{i+1}"
         print(f"  - Generating data for '{bot_name}'...")
         
         # --- Create a unique "personality" for this bot ---
