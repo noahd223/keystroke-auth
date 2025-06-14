@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from train_model_improved import ImprovedSiameseNetwork
+from train_model import ImprovedSiameseNetwork
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 

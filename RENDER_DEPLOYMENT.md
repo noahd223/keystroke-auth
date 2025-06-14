@@ -13,8 +13,9 @@ This guide will walk you through deploying your Keystroke Authenticator full sta
 The following files have been created/modified for Render deployment:
 
 ### Backend Configuration:
-- `back-end/requirements.txt` - Updated with latest PyTorch and gunicorn
+- `back-end/requirements.txt` - Updated with latest compatible PyTorch versions
 - `back-end/requirements-flexible.txt` - Alternative with flexible versions
+- `back-end/runtime.txt` - Specifies Python 3.11 for compatibility
 - `back-end/collection.py` - Updated with environment variables and health check
 - `back-end/render.yaml` - Render service configuration (optional)
 
@@ -28,7 +29,7 @@ The following files have been created/modified for Render deployment:
 ### Step 1: Push to GitHub
 ```bash
 git add .
-git commit -m "Add Render deployment configuration"
+git commit -m "Fix PyTorch compatibility and pin Python version"
 git push origin main
 ```
 
@@ -57,6 +58,7 @@ git push origin main
      ```
      FLASK_ENV = production
      PYTHONPATH = /opt/render/project/src
+     PYTHON_VERSION = 3.11.10
      ```
 
 5. **Choose Plan**
@@ -105,6 +107,7 @@ If you prefer manual setup instead of using render.yaml:
 5. Environment Variables:
    - `FLASK_ENV=production`
    - `PYTHONPATH=/opt/render/project/src`
+   - `PYTHON_VERSION=3.11.10`
 
 ### Frontend Manual Setup:
 1. New Web Service → Connect repo
@@ -126,46 +129,50 @@ If you prefer manual setup instead of using render.yaml:
 
 ### Common Issues:
 
-1. **PyTorch Version Compatibility Error**:
+1. **PyTorch/TorchVision Version Compatibility Error**:
    ```
-   ERROR: Could not find a version that satisfies the requirement torch==2.3.1
+   ERROR: Could not find a version that satisfies the requirement torchvision==0.20.1
    ```
    **Solutions:**
-   - **Option A**: Use the updated `requirements.txt` (already fixed with torch==2.7.1)
-   - **Option B**: Use flexible versions by renaming `requirements-flexible.txt` to `requirements.txt`:
+   - ✅ **Fixed**: Updated to `torchvision==0.22.1` (compatible with Python 3.13)
+   - ✅ **Fixed**: Added `runtime.txt` to pin Python 3.11 for stability
+   - **Alternative**: Use flexible versions by switching to `requirements-flexible.txt`:
      ```bash
      cd back-end
-     mv requirements.txt requirements-old.txt
+     mv requirements.txt requirements-pinned.txt
      mv requirements-flexible.txt requirements.txt
      git add . && git commit -m "Use flexible PyTorch versions" && git push
      ```
-   - **Option C**: Specify Python version in Render:
-     - Add environment variable: `PYTHON_VERSION=3.11`
 
-2. **Build Timeout**: 
+2. **Python Version Issues**:
+   - Render defaults to Python 3.13.4 which may have compatibility issues
+   - **Solution**: Use `runtime.txt` to specify Python 3.11.10 (already added)
+   - **Manual**: Add environment variable `PYTHON_VERSION=3.11.10`
+
+3. **Build Timeout**: 
    - Render free tier has 15-minute build limit
    - PyTorch is large but should fit within limit
    - Consider upgrading to paid plan if needed
 
-3. **Memory Issues**: 
+4. **Memory Issues**: 
    - Free tier: 512MB RAM
    - Should be sufficient for basic ML models
    - Monitor usage in Render dashboard
 
-4. **Cold Starts**: 
+5. **Cold Starts**: 
    - Free tier services sleep after 15 minutes of inactivity
    - First request after sleep takes ~30 seconds
    - Paid plans don't have this limitation
 
-5. **CORS Issues**:
+6. **CORS Issues**:
    - Ensure backend URL is correct in frontend env vars
    - Check CORS configuration in Flask app
 
-6. **File Persistence**:
+7. **File Persistence**:
    - Render's filesystem is ephemeral
    - Use Render PostgreSQL or external storage for persistent data
 
-7. **Import Errors with ML Pipeline**:
+8. **Import Errors with ML Pipeline**:
    - If you get import errors for `ml_pipeline.evaluate_model`:
    - Make sure all your ML pipeline files are in the `back-end` directory
    - Check that `PYTHONPATH` environment variable is set correctly
