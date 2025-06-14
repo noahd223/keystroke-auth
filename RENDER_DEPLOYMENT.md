@@ -13,7 +13,8 @@ This guide will walk you through deploying your Keystroke Authenticator full sta
 The following files have been created/modified for Render deployment:
 
 ### Backend Configuration:
-- `back-end/requirements.txt` - Updated with CPU-only PyTorch and gunicorn
+- `back-end/requirements.txt` - Updated with latest PyTorch and gunicorn
+- `back-end/requirements-flexible.txt` - Alternative with flexible versions
 - `back-end/collection.py` - Updated with environment variables and health check
 - `back-end/render.yaml` - Render service configuration (optional)
 
@@ -125,28 +126,49 @@ If you prefer manual setup instead of using render.yaml:
 
 ### Common Issues:
 
-1. **Build Timeout**: 
+1. **PyTorch Version Compatibility Error**:
+   ```
+   ERROR: Could not find a version that satisfies the requirement torch==2.3.1
+   ```
+   **Solutions:**
+   - **Option A**: Use the updated `requirements.txt` (already fixed with torch==2.7.1)
+   - **Option B**: Use flexible versions by renaming `requirements-flexible.txt` to `requirements.txt`:
+     ```bash
+     cd back-end
+     mv requirements.txt requirements-old.txt
+     mv requirements-flexible.txt requirements.txt
+     git add . && git commit -m "Use flexible PyTorch versions" && git push
+     ```
+   - **Option C**: Specify Python version in Render:
+     - Add environment variable: `PYTHON_VERSION=3.11`
+
+2. **Build Timeout**: 
    - Render free tier has 15-minute build limit
    - PyTorch is large but should fit within limit
    - Consider upgrading to paid plan if needed
 
-2. **Memory Issues**: 
+3. **Memory Issues**: 
    - Free tier: 512MB RAM
    - Should be sufficient for basic ML models
    - Monitor usage in Render dashboard
 
-3. **Cold Starts**: 
+4. **Cold Starts**: 
    - Free tier services sleep after 15 minutes of inactivity
    - First request after sleep takes ~30 seconds
    - Paid plans don't have this limitation
 
-4. **CORS Issues**:
+5. **CORS Issues**:
    - Ensure backend URL is correct in frontend env vars
    - Check CORS configuration in Flask app
 
-5. **File Persistence**:
+6. **File Persistence**:
    - Render's filesystem is ephemeral
    - Use Render PostgreSQL or external storage for persistent data
+
+7. **Import Errors with ML Pipeline**:
+   - If you get import errors for `ml_pipeline.evaluate_model`:
+   - Make sure all your ML pipeline files are in the `back-end` directory
+   - Check that `PYTHONPATH` environment variable is set correctly
 
 ### Logs and Debugging:
 - View logs in Render service dashboard
