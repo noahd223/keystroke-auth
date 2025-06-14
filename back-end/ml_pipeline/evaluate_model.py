@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from train_model import ImprovedSiameseNetwork
+from .train_model import ImprovedSiameseNetwork
 from sklearn.preprocessing import RobustScaler
 import os
 
