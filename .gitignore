@@ -50,17 +50,6 @@ yarn-error.log*
 
 # Data files
 *.csv
-
-
-# Model files
-*.pt
-*.pth
-*.ckpt
-saved_models/
-models/
-
-
-
 # Images
 *.png
 *.jpg

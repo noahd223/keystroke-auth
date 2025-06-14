@@ -1,0 +1,10 @@
+flask
+flask_cors
+pandas
+numpy
+torch
+torchaudio
+torchvision
+scikit-learn
+joblib
+gunicorn 
