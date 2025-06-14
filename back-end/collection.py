@@ -215,6 +215,13 @@ def enroll_user():
     except Exception as e:
         return jsonify({"error": f"Enrollment error: {str(e)}"}), 500
 
+# Health check endpoint for Railway
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "service": "keystroke-authenticator-api"}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Use environment variables for production deployment
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    app.run(host='0.0.0.0', port=port, debug=debug)
