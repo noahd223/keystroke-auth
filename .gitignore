@@ -50,14 +50,7 @@ yarn-error.log*
 
 # Data files
 *.csv
-*.json
-*.pkl
-*.pickle
-*.h5
-*.hdf5
-*.db
-*.sqlite
-*.sqlite3
+
 
 # Model files
 *.pt
@@ -66,27 +59,9 @@ yarn-error.log*
 saved_models/
 models/
 
-# Logs
-*.log
-logs/
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Images and media (if not needed)
+# Images
 *.png
 *.jpg
 *.jpeg
