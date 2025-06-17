@@ -74,7 +74,7 @@ def apply_personality_to_keystroke(row, personality, position_in_sequence):
     
     return new_row
 
-def generate_improved_synthetic_data(num_users=30):
+def generate_improved_synthetic_data(num_users=100):
     """
     Generate more diverse synthetic users with realistic typing patterns.
     """
