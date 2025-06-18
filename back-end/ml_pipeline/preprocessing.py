@@ -8,8 +8,8 @@ import glob
 import random
 
 # --- Configuration ---
-INPUT_DIR = 'keystroke_data/'
-PROCESSED_DIR = 'processed_data/'
+INPUT_DIR = '../keystroke_data/'
+PROCESSED_DIR = '../processed_data/'
 SEQUENCE_LENGTH = 50  # Reduced from 100 to focus on shorter, more meaningful sequences
 FEATURES_TO_USE = ['dwell_time', 'p2p_time', 'r2p_time', 'r2r_time']
 

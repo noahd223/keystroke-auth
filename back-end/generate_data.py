@@ -74,18 +74,18 @@ def apply_personality_to_keystroke(row, personality, position_in_sequence):
     
     return new_row
 
-def generate_improved_synthetic_data(num_users=100):
+def generate_synthetic_data(num_users=100, original_data_file=ORIGINAL_DATA_FILE):
     """
     Generate more diverse synthetic users with realistic typing patterns.
     """
     print("Starting improved synthetic data generation...")
     
     try:
-        df_original = pd.read_csv(ORIGINAL_DATA_FILE)
+        df_original = pd.read_csv(original_data_file)
         original_user_name = df_original['user'].unique()[0]
         print(f"Loaded data for original user: '{original_user_name}'")
     except FileNotFoundError:
-        print(f"Error: The original data file '{ORIGINAL_DATA_FILE}' was not found.")
+        print(f"Error: The original data file '{original_data_file}' was not found.")
         return
     
     if not os.path.exists(OUTPUT_DIR):
@@ -95,7 +95,7 @@ def generate_improved_synthetic_data(num_users=100):
     print(f"Keeping original user data...")
     
     for i in range(num_users):
-        bot_name = f"user_{i+1}"
+        bot_name = f"{original_user_name}_copy_{i+1}"
         print(f"  - Generating data for '{bot_name}' with enhanced personality...")
         
         # Create a unique personality
@@ -148,4 +148,6 @@ def generate_improved_synthetic_data(num_users=100):
     print("\nImproved synthetic data generation complete.")
 
 if __name__ == '__main__':
-    generate_improved_synthetic_data() 
+    num_users = int(input("Enter the number of users to generate: "))
+    original_data_file = input("Enter the path to the original data file: ")
+    generate_synthetic_data(num_users, original_data_file) 

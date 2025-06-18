@@ -180,8 +180,8 @@ def main():
     """
     print("Loading data...")
     try:
-        X = np.load('processed_data/X_processed.npy')
-        y = np.load('processed_data/y_processed.npy')
+        X = np.load('../processed_data/X_processed.npy')
+        y = np.load('../processed_data/y_processed.npy')
         print(f"Data loaded: X shape {X.shape}, y shape {y.shape}")
     except FileNotFoundError:
         print("Error: Run preprocessing first to generate processed data files.")
